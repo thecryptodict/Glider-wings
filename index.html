@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Profile Wingifier</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f7f7f7; }
+        .canvas-container {
+            /* Fixed aspect ratio container for the square canvas */
+            width: 100%;
+            max-width: 400px;
+            margin: 0 auto;
+            aspect-ratio: 1 / 1;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            border-radius: 1rem;
+            overflow: hidden;
+            background-color: #fff;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: grab;
+        }
+        canvas.dragging {
+            cursor: grabbing;
+        }
+        .file-input-label {
+            transition: all 0.2s ease;
+        }
+        .file-input-label:hover {
+            background-color: #1e40af; /* Darker blue on hover */
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="max-w-xl mx-auto bg-white p-6 md:p-8 rounded-2xl shadow-xl">
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-2">Profile Picture Wingifier</h1>
+        <p class="text-center text-gray-500 mb-6">Upload your image, drag the wings into place, and download!</p>
+
+        <!-- Main Canvas Area -->
+        <div class="canvas-container border-4 border-dashed border-gray-200">
+            <canvas id="editorCanvas"></canvas>
+        </div>
+
+        <!-- Controls and Actions -->
+        <div class="mt-6 space-y-4">
+            <!-- File Input -->
+            <input type="file" id="fileInput" accept="image/*" class="hidden">
+            <label for="fileInput" id="uploadLabel" class="file-input-label w-full flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-xl text-white bg-blue-600 cursor-pointer shadow-md">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L6.707 6.707a1 1 0 01-1.414 0z" clip-rule="evenodd" />
+                </svg>
+                Upload Profile Picture
+            </label>
+
+            <!-- Status/Instructions -->
+            <div id="statusMessage" class="text-center text-sm text-gray-500 min-h-[20px]">
+                Please upload an image to begin.
+            </div>
+
+            <!-- Download Button -->
+            <button id="downloadButton" disabled class="w-full flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-xl text-white bg-green-500 cursor-not-allowed shadow-md opacity-50 transition-opacity duration-200">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M10 2a5 5 0 00-5 5v2a2 2 0 00-2 2v5a2 2 0 002 2h10a2 2 0 002-2v-5a2 2 0 00-2-2V7a5 5 0 00-5-5zM9 7a1 1 0 012 0v2.88l1.458-1.458a1 1 0 011.414 1.414l-3.25 3.25a1 1 0 01-1.414 0l-3.25-3.25a1 1 0 011.414-1.414L9 9.88V7z" clip-rule="evenodd" fill-rule="evenodd" />
+                </svg>
+                Download Edited Image
+            </button>
+
+            <!-- Slider for Scale Control -->
+            <div class="pt-4">
+                <label for="scaleSlider" class="block text-sm font-medium text-gray-700 mb-2">Wings Size (<span id="scaleValue">100%</span>)</label>
+                <input type="range" id="scaleSlider" min="50" max="200" value="100" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" disabled>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables for Canvas, Context, and State
+        const canvas = document.getElementById('editorCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        const fileInput = document.getElementById('fileInput');
+        const downloadButton = document.getElementById('downloadButton');
+        const scaleSlider = document.getElementById('scaleSlider');
+        const scaleValueSpan = document.getElementById('scaleValue');
+        const statusMessage = document.getElementById('statusMessage');
+
+        let userImage = null; // Stores the loaded profile picture
+        
+        // Bat Wing State
+        let batX = 200; // Center X
+        let batY = 150; // Center Y
+        let batScale = 1; // 100% scale
+
+        // Dragging State
+        let isDragging = false;
+        let lastMouseX = 0;
+        let lastMouseY = 0;
+
+        // --- Utility Functions ---
+
+        /**
+         * Sets canvas dimensions and initial bat position based on the container size.
+         * Runs on load and when the image is uploaded.
+         */
+        function setupCanvasDimensions() {
+            // Use a fixed size for the editor canvas for simplicity and consistent output
+            const SIZE = 400; 
+            canvas.width = SIZE;
+            canvas.height = SIZE;
+            batX = SIZE / 2;
+            batY = SIZE / 2 - 50;
+        }
+
+        /**
+         * Draws the iconic bat wing shape onto the canvas.
+         * The shape is approximated to match the user's uploaded logo silhouette.
+         */
+        function drawBatShape(x, y, scale) {
+            const size = 100 * scale; // Base size for the wings
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.85)'; // Black color with slight transparency
+            
+            ctx.beginPath();
+            
+            // Define points for the V-shape wing (approximating the silhouette)
+            const halfSize = size / 2;
+            
+            // Start at the center-top
+            ctx.moveTo(x, y - halfSize / 4);
+            
+            // Left wing points
+            ctx.lineTo(x - halfSize * 0.8, y - halfSize * 0.4); 
+            ctx.lineTo(x - halfSize * 1.2, y - halfSize * 0.1); 
+            ctx.lineTo(x - halfSize, y + halfSize * 0.2); 
+            
+            // Center point (the 'V' notch)
+            ctx.lineTo(x, y + halfSize * 0.4); 
+
+            // Right wing points
+            ctx.lineTo(x + halfSize, y + halfSize * 0.2); 
+            ctx.lineTo(x + halfSize * 1.2, y - halfSize * 0.1); 
+            ctx.lineTo(x + halfSize * 0.8, y - halfSize * 0.4); 
+            
+            // Close the path to the center-top
+            ctx.closePath();
+            
+            ctx.fill();
+        }
+
+
+        /**
+         * Clears the canvas and redraws the user image and the bat wings.
+         */
+        function renderCanvas() {
+            // 1. Clear the canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // 2. Draw background (light grey if no image)
+            ctx.fillStyle = '#f0f0f0';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 3. Draw the User Image (scaled to fit the square canvas)
+            if (userImage) {
+                const img = userImage;
+                const canvasSize = canvas.width;
+                
+                // Calculate scale factor to cover the canvas size (cropping if needed)
+                const scale = Math.max(canvasSize / img.width, canvasSize / img.height);
+                const w = img.width * scale;
+                const h = img.height * scale;
+                const x = (canvasSize - w) / 2;
+                const y = (canvasSize - h) / 2;
+                
+                ctx.drawImage(img, x, y, w, h);
+            }
+
+            // 4. Draw the Bat Wings
+            drawBatShape(batX, batY, batScale);
+        }
+
+        // --- Event Handlers ---
+
+        /**
+         * Handles the user selecting an image file.
+         */
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            statusMessage.textContent = 'Image loaded. Drag the wings to reposition.';
+            
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const img = new Image();
+                img.onload = () => {
+                    userImage = img;
+                    // Enable controls and button
+                    downloadButton.disabled = false;
+                    downloadButton.classList.remove('cursor-not-allowed', 'opacity-50', 'bg-red-500');
+                    downloadButton.classList.add('bg-green-600', 'hover:bg-green-700');
+                    scaleSlider.disabled = false;
+                    
+                    // Reset position and render
+                    setupCanvasDimensions();
+                    renderCanvas();
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+        
+        /**
+         * Starts the dragging process.
+         */
+        canvas.addEventListener('mousedown', (e) => {
+            if (!userImage) return;
+
+            // Get mouse position relative to the canvas
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            // Check if the click is near the wings (simple bounding box check)
+            const hitAreaSize = 100 * batScale;
+            if (mouseX >= batX - hitAreaSize && mouseX <= batX + hitAreaSize && 
+                mouseY >= batY - hitAreaSize && mouseY <= batY + hitAreaSize) {
+                
+                isDragging = true;
+                lastMouseX = mouseX;
+                lastMouseY = mouseY;
+                canvas.classList.add('dragging');
+            }
+        });
+
+        /**
+         * Updates the bat position during dragging.
+         */
+        canvas.addEventListener('mousemove', (e) => {
+            if (!isDragging || !userImage) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            // Calculate difference in canvas coordinates
+            const deltaX = mouseX - lastMouseX;
+            const deltaY = mouseY - lastMouseY;
+
+            // Scale the delta to match the internal canvas resolution (400x400)
+            const scaleFactor = canvas.width / rect.width;
+            
+            batX += deltaX * scaleFactor;
+            batY += deltaY * scaleFactor;
+
+            lastMouseX = mouseX;
+            lastMouseY = mouseY;
+
+            renderCanvas();
+        });
+
+        /**
+         * Stops the dragging process.
+         */
+        canvas.addEventListener('mouseup', () => {
+            isDragging = false;
+            canvas.classList.remove('dragging');
+        });
+        
+        /**
+         * Handles touch events for mobile devices.
+         */
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault(); // Prevent scrolling on touch
+            const touch = e.touches[0];
+            canvas.dispatchEvent(new MouseEvent('mousedown', {
+                clientX: touch.clientX,
+                clientY: touch.clientY,
+                bubbles: true
+            }));
+        });
+        
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            canvas.dispatchEvent(new MouseEvent('mousemove', {
+                clientX: touch.clientX,
+                clientY: touch.clientY,
+                bubbles: true
+            }));
+        });
+        
+        canvas.addEventListener('touchend', () => {
+            canvas.dispatchEvent(new MouseEvent('mouseup', {
+                bubbles: true
+            }));
+        });
+
+        /**
+         * Handles the download button click.
+         */
+        downloadButton.addEventListener('click', () => {
+            if (!userImage) return;
+
+            // Re-render one last time to ensure everything is current
+            renderCanvas(); 
+
+            // Create a temporary link element to trigger the download
+            const link = document.createElement('a');
+            link.download = 'profile-with-wings.png';
+            link.href = canvas.toDataURL('image/png');
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            // Provide feedback
+            statusMessage.textContent = 'Download complete! Check your downloads folder.';
+        });
+
+        /**
+         * Handles the scale slider change.
+         */
+        scaleSlider.addEventListener('input', (e) => {
+            const percentage = e.target.value;
+            scaleValueSpan.textContent = `${percentage}%`;
+            batScale = percentage / 100;
+            if (userImage) {
+                renderCanvas();
+            }
+        });
+
+
+        // --- Initialization ---
+
+        // Set initial canvas dimensions and draw placeholder
+        window.onload = () => {
+            setupCanvasDimensions();
+            ctx.fillStyle = '#4f46e5'; // Indigo color
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '20px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Click "Upload Profile Picture" to start.', canvas.width / 2, canvas.height / 2);
+        };
+    </script>
+
+</body>
+</html>
